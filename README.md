@@ -48,5 +48,10 @@ When the misclassified (True miss) images are edited and fed back into the neura
 
 ## run
 ```
-python main.py
+# Train the Prober
+train_prober.py
+```
+```
+# Generate the counterfactuals (corrected samples)
+generate_counterfactual.py
 ```
