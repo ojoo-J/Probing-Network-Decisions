@@ -1,5 +1,5 @@
 # Probing Network Decisions: Capturing Uncertainties and Unveiling Vulnerabilities without Label Information
-**ICPRAI 2024 (Oral, Honorable Mentions✨)** [[Paper](https://drive.google.com/file/d/14jzIZfl1UizdKTXNp5Nz1hJiJcFMQEsv/view)]
+**ICPRAI 2024 (Oral, Honorable Mentions✨)** [[Paper](https://link.springer.com/chapter/10.1007/978-981-97-8702-9_21)]
 
 ## Summary
 With the rapid advancements in deep learning, Deep Neural Networks (DNNs) are being actively utilized in critical domains such as healthcare and autonomous driving. In these applications, the decisions made by neural networks can directly impact human safety and lives, making the reliability and interpretability of models essential. Specifically, understanding the causes of misclassification plays a crucial role in enhancing the transparency and trustworthiness of models. Furthermore, if a model could autonomously identify and correct the causes of its misclassifications, it would provide an even higher level of stability and reliability.
