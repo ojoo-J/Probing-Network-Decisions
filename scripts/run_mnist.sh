@@ -1,14 +1,14 @@
 #!/bin/bash
 
-# python -m experiments.eval_clf \
-#     --dataset MNIST \
-#     --data-dir /project/prev/NNV/data \
-#     --save-dir /project/outputs \
-#     --arch CNN \
-#     --ckpt-path /project/run/MNIST_CNN.pth \
-#     --seed 0 \
-#     --layer-name fc_layer.4 \
-#     --acc-n 5
+python -m experiments.eval_clf \
+    --dataset MNIST \
+    --data-dir /project/prev/NNV/data \
+    --save-dir /project/outputs \
+    --arch CNN \
+    --ckpt-path /project/run/MNIST_CNN.pth \
+    --seed 0 \
+    --layer-name fc_layer.4 \
+    --acc-n 5
 
 # python -m experiments.train_prober \
 #     --dataset MNIST \

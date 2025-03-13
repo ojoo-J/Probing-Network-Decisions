@@ -7,10 +7,24 @@ import torch.utils.data
 
 def split_dataset(train_set, val_set, train_ratio, save_dir, split="add"):
     # MNIST original split train : valid = 60000 : 10000
-    ### Change to train : valid = 6 + 0.8 : 0.2
-
     # CIFAR10 original split train : valid = 50000 : 10000
-    ### Change to train : valid = 6 + 0.8 : 0.2 
+    """
+    # Split options:
+    # - "add": Uses validation set data for both training and validation
+    #   * Takes portion of validation set and adds it to training set
+    #   * Remaining validation data used for probing validation
+    #   * Results in overlapping data between classifier and prober training
+    #
+    # - "disjoint": Keeps classifier and prober data separate
+    #   * Uses original training data only for classifier
+    #   * Splits validation set into prober train/val sets
+    #   * Ensures no overlap between classifier and prober data
+    #
+    # - "clf": Uses same splits as original classifier
+    #   * Training data used for both classifier and prober training
+    #   * Validation data used for both classifier and prober validation
+    #   * Maintains original dataset splits
+    """
     
     if split == "add":
         add_train_size = int(train_ratio * len(val_set))
@@ -45,7 +59,7 @@ def split_dataset(train_set, val_set, train_ratio, save_dir, split="add"):
             np.array(val_set.data["index"])[prober_val_set.indices]
         ).tolist()
 
-    elif split == "cls":
+    elif split == "clf":
         prober_train_set = train_set
         prober_val_set = val_set
         
@@ -56,7 +70,7 @@ def split_dataset(train_set, val_set, train_ratio, save_dir, split="add"):
         split_dict["prober_valid"] = val_set.data["index"]
         
     else:
-        assert False, "split should be one of add, disjoint, or cls"
+        assert False, "split should be one of add, disjoint, or clf"
     
     with open(os.path.join(save_dir, "split.json"), "w") as fw:
         json.dump(split_dict, fw, indent=2)
