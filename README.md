@@ -47,11 +47,17 @@ By using the prober to generate counterfactuals that reduce the uncertainty of t
 When the misclassified (True miss) images are edited and fed back into the neural network, we observe an approximately 87% improvement in performance. This demonstrates the potential of the neural network’s auto-correction capability.
 
 ## run
+Given a trained classifier and generative network, follow these steps to: (1) evaluate the representation, (2) train a prober to model the implicit probability, and (3) generate counterfactual examples. You can refer to `scripts/run_mnist.sh` for example usage.
+
+```
+# Evaluate the representation
+python experiments/eval_clf.py
+```
 ```
 # Train the Prober
-train_prober.py
+python experiments/train_prober.py
 ```
 ```
 # Generate the counterfactuals (corrected samples)
-generate_counterfactual.py
+python experiments/generate_counterfactual.py
 ```
