@@ -1,28 +1,28 @@
 #!/bin/bash
 
-# python -m experiments.eval_clf \
-#     --dataset MNIST \
-#     --data-dir /project/prev/NNV/data \
-#     --save-dir /project/outputs \
-#     --arch CNN \
-#     --ckpt-path /project/run/MNIST_CNN.pth \
-#     --seed 0 \
-#     --layer-name fc_layer.4 \
-#     --acc-n 5
-
-python -m experiments.train_prober \
+python -m experiments.eval_clf \
     --dataset MNIST \
-    --train-path /project/outputs/MNIST_fc_layer-4th-layer-acc1_train_59165-835.pkl \
-    --valid-path /project/outputs/MNIST_fc_layer-4th-layer-acc1_valid_9850-150.pkl \
-    --save-dir /project/outputs/epochs-20_lr-1e-1 \
-    --epochs 2 \
-    --batch-size 128 \
-    --lr 1e-1 \
-    --label-smoothing 0.2 \
-    --latent-dim1 256 \
-    --latent-dim2 128 \
-    --latent-dim3 64 \
-    --split mirror
+    --data-dir /project/prev/NNV/data \
+    --save-dir /project/outputs \
+    --arch CNN \
+    --ckpt-path /project/run/MNIST_CNN.pth \
+    --seed 0 \
+    --layer-name fc_layer.4 \
+    --acc-n 1
+
+# python -m experiments.train_prober \
+#     --dataset MNIST \
+#     --train-path /project/outputs/MNIST_fc_layer.4_acc5_train_60000.pkl \
+#     --valid-path /project/outputs/MNIST_fc_layer.4_acc5_valid_10000.pkl \
+#     --save-dir /project/outputs/epochs-20_lr-1e-1 \
+#     --epochs 2 \
+#     --batch-size 128 \
+#     --lr 1e-1 \
+#     --label-smoothing 0.2 \
+#     --latent-dim1 256 \
+#     --latent-dim2 128 \
+#     --latent-dim3 64 \
+#     --split mirror
 
 # python -m experiments.generate_counterfactual \
 #     --data-dir /project/prev/NNV/data \

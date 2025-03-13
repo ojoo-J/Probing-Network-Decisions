@@ -12,14 +12,11 @@ def accuracy(output: torch.Tensor, target: torch.Tensor, topk: Tuple[int] = (1,)
     batch_size = target.size(0)
 
     _, pred = output.topk(maxk, 1, True, True)
-    pred = pred.t()
-    correct = pred.eq(target.view(1, -1).expand_as(pred))
+    correct = pred.eq(target.view(-1, 1).expand_as(pred)) # (batch_size, top_k)
+    correct = correct.any(dim=1).float()  # Aggregate into (batch_size)
 
-    res = []
-    for k in topk:
-        correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
-        res.append(correct_k.mul_(100.0 / batch_size))
-    return res
+    acc = correct / len(correct)
+    return acc, correct
 
 def calc_entropy(input_tensor):
     """Calculate entropy of input probabilities"""
