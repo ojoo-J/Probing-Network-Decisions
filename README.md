@@ -1,5 +1,5 @@
 # Probing Network Decisions: Capturing Uncertainties and Unveiling Vulnerabilities without Label Information
-**ICPRAI 2024 (Oral, Honorable Mentions✨)** [[Paper](https://drive.google.com/file/d/14jzIZfl1UizdKTXNp5Nz1hJiJcFMQEsv/view)]
+**ICPRAI 2024 (Oral, Honorable Mentions✨)** [[Paper](https://link.springer.com/chapter/10.1007/978-981-97-8702-9_21)]
 
 ## Summary
 With the rapid advancements in deep learning, Deep Neural Networks (DNNs) are being actively utilized in critical domains such as healthcare and autonomous driving. In these applications, the decisions made by neural networks can directly impact human safety and lives, making the reliability and interpretability of models essential. Specifically, understanding the causes of misclassification plays a crucial role in enhancing the transparency and trustworthiness of models. Furthermore, if a model could autonomously identify and correct the causes of its misclassifications, it would provide an even higher level of stability and reliability.
@@ -47,11 +47,17 @@ By using the prober to generate counterfactuals that reduce the uncertainty of t
 When the misclassified (True miss) images are edited and fed back into the neural network, we observe an approximately 87% improvement in performance. This demonstrates the potential of the neural network’s auto-correction capability.
 
 ## run
+Given a trained classifier and generative network, follow these steps to: (1) evaluate the representation, (2) train a prober to model the implicit probability, and (3) generate counterfactual examples. You can refer to `scripts/run_mnist.sh` for example usage.
+
+```
+# Evaluate the representation
+python experiments/eval_clf.py
+```
 ```
 # Train the Prober
-train_prober.py
+python experiments/train_prober.py
 ```
 ```
 # Generate the counterfactuals (corrected samples)
-generate_counterfactual.py
+python experiments/generate_counterfactual.py
 ```

@@ -1,4 +1,3 @@
-
 import argparse
 import json
 import os
@@ -16,21 +15,18 @@ import numpy as np
 import torch
 import torchvision
 import torch.backends.cudnn as cudnn
-import torchvision.transforms as transforms
-from pytorch_lightning import seed_everything
-from torch import nn
-from torchvision.utils import make_grid
 from tqdm.auto import tqdm
-from utils.get_classifier import evaluate, get_classifier_MNIST
-from utils.get_data import get_correct_labels, get_dataset, get_index_tn
-from utils.get_generator import CombinedNN, Identity, adv_attack, get_generator_MNIST
-from utils.get_prober import ProberMNIST
-from run_orig.utils.get_generator import evaluate_all
-from torchvision.utils import save_image
+from models import (
+    get_classifier,
+    get_prober,
+    get_generator,
+    get_combined
+)
+from utils.get_generator import CombinedNN, Identity, adv_attack, get_generator_MNIST, evaluate_all
+from data.datasets import get_dataset  # Updated import
 
-import wandb
-from counterfactuals.data import get_data_info
-from counterfactuals.plot import plot_grid_part
+
+# import wandb
 
 
 plt.rcParams.update(plt.rcParamsDefault)
@@ -47,7 +43,7 @@ def signal_handler(sig, frame):
 
 def main(args):
 
-    run = wandb.init(project=f"counterfactual_{args.dataset}", config=args)
+    # run = wandb.init(project=f"counterfactual_{args.dataset}", config=args)
     seed = 0
     random.seed(seed)
     torch.manual_seed(seed)
@@ -62,41 +58,44 @@ def main(args):
 
     prober_valid_indices = np.array([i - 60000 for i in split_indices["prober_valid"]])
 
-    if args.dataset == "MNIST":
-        classifier, data_info = get_classifier_MNIST(args.cls_ckpt_path)
-        prober = ProberMNIST()
-        prober.load_state_dict(torch.load(args.prober_ckpt_path))
-        #print(prober)
+    if args.dataset.lower() == "mnist":
+        # Get models using new interface
+        classifier = get_classifier(args.dataset, ckpt_path=args.cls_ckpt_path)
+        
+        dataset = get_dataset('mnist', data_dir=args.data_dir, batch_size=args.batch_size)
+        data_info = dataset._get_data_info()
+        
+        prober = get_prober(args.dataset, ckpt_path=args.prober_ckpt_path)
+        
+        # Get feature extractor (classifier without final layer)
+        feature_extractor = get_classifier(args.dataset, ckpt_path=args.cls_ckpt_path)
+        if hasattr(feature_extractor, 'fc_layer'):
+            feature_extractor.fc_layer = feature_extractor.fc_layer[:-1]  # Remove last layer
+        
+        generator = get_generator(args.dataset, ckpt_path=args.g_ckpt_path, device=args.device)
 
-        classifier2, data_info = get_classifier_MNIST(args.cls_ckpt_path)
-        classifier2.fc_layer[5] = Identity()
-        classifier2.fc_layer[6] = Identity()
+        hidden_mean, hidden_std = 0.94484913, 1.8451711  # Consider making these configurable
 
-        g_model = get_generator_MNIST(args.g_ckpt_path, device=args.device)
-
-        hidden_mean, hidden_std = 0.94484913, 1.8451711
-
-        valid_dataset = torchvision.datasets.MNIST(
-            root=args.data_dir, train=False, transform=torchvision.transforms.ToTensor()
-        )
+        # Get data loaders
+        train_loader, val_loader = dataset.get_loaders()
+        
+        # For specific indices
+        valid_dataset = dataset.val_dataset
         valid_dataset.data = valid_dataset.data[prober_valid_indices]
         valid_dataset.targets = valid_dataset.targets[prober_valid_indices]
         valid_loader = torch.utils.data.DataLoader(
             valid_dataset, batch_size=args.batch_size, shuffle=False
         )
 
-        train_dataset = torchvision.datasets.MNIST(
-            root=args.data_dir, train=True, transform=torchvision.transforms.ToTensor()
-        )
-        train_loader = torch.utils.data.DataLoader(
-            train_dataset, batch_size=args.batch_size, shuffle=False
-        )
-
-    net = CombinedNN(
-        classifier2, prober, hidden_mean=hidden_mean, hidden_std=hidden_std
+    # Create combined model using new interface
+    net = get_combined(
+        classifier=feature_extractor,
+        prober=prober,
+        hidden_mean=hidden_mean,
+        hidden_std=hidden_std
     )
-    net.eval()
-
+    
+    # Move models to device
     classifier.to(args.device)
     net.to(args.device)
     classifier.eval()
@@ -106,30 +105,31 @@ def main(args):
     valid_vals = evaluate_all(valid_loader, classifier, net, args.device)
 
     metric = BinaryStatScores()
-    stats = metric(valid_vals["prober_pred"], valid_vals["correct"])
-    print("Verify with wandb log !!!")
+    print(valid_vals["prb_pred"])
+    print("="*50)
+    print(valid_vals["correct"])
+    stats = metric(valid_vals["prb_pred"], valid_vals["correct"])
+    # print("Verify with wandb log !!!")
     print(f'⭐️⭐️⭐️⭐️⭐️⭐️⭐️ {stats} ⭐️⭐️⭐️⭐️⭐️⭐️⭐️')
 
     
     ###### True Miss Case
     interested_indices = torch.where(
-        (train_vals["label"] != train_vals["cls_pred"])
-        & (train_vals["prober_pred"] == 0)
+        (train_vals["label"] != train_vals["clf_pred"])
+        & (train_vals["prb_pred"] == 0)
     )[0]
     print(f'True Neg: {len(interested_indices)}')
     
     ##### False Miss Case
     # interested_indices = torch.where(
-    #     (valid_vals["label"] == valid_vals["cls_pred"])
-    #     & (valid_vals["prober_pred"] == 0)
+    #     (valid_vals["label"] == valid_vals["clf_pred"])
+    #     & (valid_vals["prb_pred"] == 0)
     # )[0]
-    # interested_indices = torch.where((valid_vals["prober_pred"] == 0))[0]
+    # interested_indices = torch.where((valid_vals["prb_pred"] == 0))[0]
     # print(f'False Neg: {len(interested_indices)}')
 
-
-
-    wandb.config.update(args, allow_val_change=True)
-    print(wandb.config)
+    # wandb.config.update(args, allow_val_change=True)
+    # print(wandb.config)
 
     total_list = []
     
@@ -142,14 +142,14 @@ def main(args):
         img_org = valid_vals["image"][idx]
         label = valid_vals["label"][idx]
 
-        result_images, titles, cmaps, _, step_diff = adv_attack(
+        result_images, titles, cmaps, _ = adv_attack(
             img_org.clone().unsqueeze(0),
             label,
-            g_model,
+            generator,
             classifier,
             args.device,
             data_info,
-            num_steps=5000,
+            num_steps=args.steps,
             lr=1e-2,
             save_at=0.9,
             target_class=label.item(),
@@ -158,14 +158,14 @@ def main(args):
             attack_type="diff",
         )
 
-        rs, ts, cm, x_prime, step_prober = adv_attack(
+        rs, ts, cm, x_prime = adv_attack(
             img_org.clone().unsqueeze(0),
             label,
-            g_model,
+            generator,
             net,
             args.device,
             data_info,
-            num_steps=5000,
+            num_steps=args.steps,
             lr=1e-2,
             save_at=0.92,
             target_class=1,
@@ -183,7 +183,7 @@ def main(args):
         sample_info['orig_img'] = img_org
         sample_info['label'] = label.item()
         sample_info['r_img'] = torch.Tensor(rs[2]).unsqueeze(dim=0)
-        sample_info['orig_max_prob'] = valid_vals["cls_prob"][idx].max()
+        sample_info['orig_max_prob'] = valid_vals["clf_prob"][idx].max()
         total_list.append(sample_info)
     
 
@@ -196,7 +196,7 @@ def main(args):
             axes[i].set_title(title)
         
         fig.suptitle(
-            f"Split : Valid - Cls. X, Prober X ({step_diff}/{step_prober})"
+            f"Split : Valid - Cls. X, Prober X )"
         )
         fig.savefig(os.path.join(args.save_dir, f"idx-{idx}.png"))
         plt.close(fig)
@@ -216,12 +216,11 @@ if __name__ == "__main__":
         type=str,
         default="./outputs/<save path>",
     )
-    parser.add_argument("--epochs", type=int, default=30)
+    parser.add_argument("--steps", type=int, default=5000)
     parser.add_argument("--batch-size", type=int, default=512)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", type=str, default="cuda")
-    parser.add_argument("--train-ratio", type=float, default=0.8)
     parser.add_argument(
         "--cls-ckpt-path",
         type=str,
