@@ -13,9 +13,10 @@ from torchmetrics.classification import BinaryStatScores
 from torchvision import datasets, models, transforms
 from tqdm.auto import tqdm
 
-from data import HiddenDataset, split_dataset
-from models.factory import get_prober
-from utils.metrics import calc_metrics_from_loader, get_labels_and_onehot, calc_metrics
+from data.datasets import get_dataset, HiddenDataset
+from data.utils import split_dataset
+from models import get_prober
+from utils.metrics import get_labels_and_onehot, calc_metrics
 
 
 @torch.no_grad()
@@ -55,9 +56,9 @@ def eval(args, data_loader, prober, criterion):
 def train(args, train_loader, val_loader, prober, train_set, val_set):
     """Train prober model"""
     criterion = nn.CrossEntropyLoss(
-        weight=torch.Tensor([args.loss_weight, 1]),
+        weight=torch.Tensor([args.loss_weight, 1]).to(args.device),
         label_smoothing=args.label_smoothing
-    ).to(args.device)
+    )
     optimizer = torch.optim.Adam(prober.parameters(), lr=args.lr)
     
     train_label, train_onehot = get_labels_and_onehot(train_set)
@@ -148,12 +149,9 @@ def main():
     cudnn.deterministic = True
     cudnn.benchmark = False
 
-    train_set = HiddenDataset(args.train_path)
+    train_set = get_dataset('hidden', hidden_data_path=args.train_path)
     mean, std = train_set.mean, train_set.std
-    val_set = HiddenDataset(args.valid_path)
-    
-    train_set.data['hidden'] = (train_set.data['hidden'] - mean) / std
-    val_set.data['hidden'] = (val_set.data['hidden'] - mean) / std
+    val_set = get_dataset('hidden', hidden_data_path=args.valid_path, mean=mean, std=std)
     
 
     prober_train_set, prober_val_set, split_dict = split_dataset(
@@ -169,7 +167,8 @@ def main():
 
     prober = get_prober(
         dataset=args.dataset,
-        latent_dim=args.latent_dim
+        input_dim=args.latent_dim1,
+        hidden_dims=[args.latent_dim2, args.latent_dim3]
     ).to(args.device)
     print(prober)
 

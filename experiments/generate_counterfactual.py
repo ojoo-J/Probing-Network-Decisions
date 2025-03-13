@@ -1,4 +1,3 @@
-
 import argparse
 import json
 import os
@@ -17,9 +16,14 @@ import torch
 import torchvision
 import torch.backends.cudnn as cudnn
 from tqdm.auto import tqdm
-from models import get_classifier_MNIST
+from models import (
+    get_classifier,
+    get_prober,
+    get_generator,
+    get_combined
+)
 from utils.get_generator import CombinedNN, Identity, adv_attack, get_generator_MNIST, evaluate_all
-from utils.get_prober import ProberMNIST
+from data.datasets import get_dataset  # Updated import
 
 
 # import wandb
@@ -54,45 +58,44 @@ def main(args):
 
     prober_valid_indices = np.array([i - 60000 for i in split_indices["prober_valid"]])
 
-    if args.dataset == "MNIST":
-        classifier = get_classifier_MNIST(args.cls_ckpt_path)
-        from data.mnist import MNISTDataModule
-        dataset = MNISTDataModule(args.data_dir)
-        data_info = dataset.info
+    if args.dataset.lower() == "mnist":
+        # Get models using new interface
+        classifier = get_classifier(args.dataset, ckpt_path=args.cls_ckpt_path)
         
-        prober = ProberMNIST()
-        prober.load_state_dict(torch.load(args.prober_ckpt_path))
-        #print(prober)
+        dataset = get_dataset('mnist', data_dir=args.data_dir, batch_size=args.batch_size)
+        data_info = dataset._get_data_info()
+        
+        prober = get_prober(args.dataset, ckpt_path=args.prober_ckpt_path)
+        
+        # Get feature extractor (classifier without final layer)
+        feature_extractor = get_classifier(args.dataset, ckpt_path=args.cls_ckpt_path)
+        if hasattr(feature_extractor, 'fc_layer'):
+            feature_extractor.fc_layer = feature_extractor.fc_layer[:-1]  # Remove last layer
+        
+        generator = get_generator(args.dataset, ckpt_path=args.g_ckpt_path, device=args.device)
 
-        classifier2 = get_classifier_MNIST(args.cls_ckpt_path)
-        classifier2.fc_layer[5] = Identity()
-        classifier2.fc_layer[6] = Identity()
+        hidden_mean, hidden_std = 0.94484913, 1.8451711  # Consider making these configurable
 
-        g_model = get_generator_MNIST(args.g_ckpt_path, device=args.device)
-
-        hidden_mean, hidden_std = 0.94484913, 1.8451711
-
-        valid_dataset = torchvision.datasets.MNIST(
-            root=args.data_dir, train=False, transform=torchvision.transforms.ToTensor()
-        )
+        # Get data loaders
+        train_loader, val_loader = dataset.get_loaders()
+        
+        # For specific indices
+        valid_dataset = dataset.val_dataset
         valid_dataset.data = valid_dataset.data[prober_valid_indices]
         valid_dataset.targets = valid_dataset.targets[prober_valid_indices]
         valid_loader = torch.utils.data.DataLoader(
             valid_dataset, batch_size=args.batch_size, shuffle=False
         )
 
-        train_dataset = torchvision.datasets.MNIST(
-            root=args.data_dir, train=True, transform=torchvision.transforms.ToTensor()
-        )
-        train_loader = torch.utils.data.DataLoader(
-            train_dataset, batch_size=args.batch_size, shuffle=False
-        )
-
-    net = CombinedNN(
-        classifier2, prober, hidden_mean=hidden_mean, hidden_std=hidden_std
+    # Create combined model using new interface
+    net = get_combined(
+        classifier=feature_extractor,
+        prober=prober,
+        hidden_mean=hidden_mean,
+        hidden_std=hidden_std
     )
-    net.eval()
-
+    
+    # Move models to device
     classifier.to(args.device)
     net.to(args.device)
     classifier.eval()
@@ -142,7 +145,7 @@ def main(args):
         result_images, titles, cmaps, _ = adv_attack(
             img_org.clone().unsqueeze(0),
             label,
-            g_model,
+            generator,
             classifier,
             args.device,
             data_info,
@@ -158,7 +161,7 @@ def main(args):
         rs, ts, cm, x_prime = adv_attack(
             img_org.clone().unsqueeze(0),
             label,
-            g_model,
+            generator,
             net,
             args.device,
             data_info,

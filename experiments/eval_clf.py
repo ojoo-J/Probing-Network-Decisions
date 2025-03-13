@@ -5,11 +5,10 @@ import random
 import torch
 import torch.backends.cudnn as cudnn
 import torch.nn as nn
-import torch.utils.data
 from tqdm import tqdm
 
-from models.factory import get_classifier
-from data.factory import get_dataset
+from models import get_classifier
+from data.datasets import get_dataset
 from utils.metrics import accuracy
 
 def parse_args():
@@ -21,14 +20,14 @@ def parse_args():
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--ckpt-path", type=str, required=True)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--module-name", type=str, default="classifier")
-    parser.add_argument("--layer-idx", type=int, default=4)
+    parser.add_argument("--layer-name", type=str, default="fc1")
     parser.add_argument("--acc-n", type=int, default=5)
+    parser.add_argument("--normalize", action="store_true")
     return parser.parse_args()
 
 def setup_model(args):
     """Setup model and hooks for feature extraction"""
-    model = get_classifier(args.dataset, ckpt_path=args.ckpt_path, arch=args.arch)
+    model = get_classifier(args.dataset, ckpt_path=args.ckpt_path)
     model.eval()
     model.cuda()
 
@@ -38,19 +37,23 @@ def setup_model(args):
             features[name] = output.detach()
         return hook
 
-    # Register hook to get features
-    if hasattr(model, args.module_name):
-        module = getattr(model, args.module_name)
-        if isinstance(module, nn.Sequential):
-            module[args.layer_idx].register_forward_hook(
-                get_features(f"{args.module_name}-{args.layer_idx}th-layer")
-            )
-        else:
-            module.register_forward_hook(
-                get_features(args.module_name)
-            )
-    else:
-        raise ValueError(f"Model has no module named {args.module_name}")
+    # Helper function to get layer from model
+    def get_layer(model, layer_name):
+        # Handle dot notation for nested layers (e.g., 'conv_layer.0')
+        if '.' in layer_name:
+            parent_name, child_name = layer_name.split('.', 1)
+            parent = getattr(model, parent_name)
+            if isinstance(parent, nn.Sequential):
+                return parent[int(child_name)]
+            return get_layer(parent, child_name)
+        return getattr(model, layer_name)
+
+    try:
+        # Try to get layer directly or through Sequential
+        layer = get_layer(model, args.layer_name)
+        layer.register_forward_hook(get_features(args.layer_name))
+    except (AttributeError, IndexError):
+        raise ValueError(f"Could not find layer: {args.layer_name}")
 
     return model, features
 
@@ -116,30 +119,14 @@ def main():
     cudnn.deterministic = True
     cudnn.benchmark = False
 
-    # Get data
-    train_dataset = get_dataset(
+    # Get dataset using new interface
+    dataset = get_dataset(
         name=args.dataset,
-        root=args.data_dir,
-        split='train'
-    )
-    val_dataset = get_dataset(
-        name=args.dataset,
-        root=args.data_dir,
-        split='val'
-    )
-
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset,
+        data_dir=args.data_dir,
         batch_size=args.batch_size,
-        shuffle=False,
-        pin_memory=True,
+        normalize=args.normalize
     )
-    val_loader = torch.utils.data.DataLoader(
-        val_dataset,
-        batch_size=args.batch_size,
-        shuffle=False,
-        pin_memory=True,
-    )
+    train_loader, val_loader = dataset.get_loaders()
 
     # Setup model
     model, features = setup_model(args)
