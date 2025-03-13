@@ -172,3 +172,8 @@ cython_debug/
 
 
 outputs/
+MNIST_CNN.pth
+MNIST_realNVP.pth
+pytest.ini
+tests/
+conftest.py

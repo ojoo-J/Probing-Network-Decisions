@@ -1,24 +1,61 @@
-# https://github.com/Impression2805/OpenMix/blob/f9906e095022219599c9466a28e9f581ad871ba4/utils/metrics.py#L165
-import argparse
-import random
-
-import numpy as np
 import torch
-import torch.backends.cudnn as cudnn
 import torch.nn as nn
 import torch.nn.functional as F
+from typing import Tuple, List
+import numpy as np
+from enum import Enum
 from sklearn import metrics
-from torch.utils.data import DataLoader
-from torchvision import transforms
-from tqdm import tqdm
 
-# import wandb
+def accuracy(output: torch.Tensor, target: torch.Tensor, topk: Tuple[int] = (1,)) -> List[torch.Tensor]:
+    """Computes the accuracy over the k top predictions"""
+    with torch.no_grad():
+        maxk = max(topk)
+        batch_size = target.size(0)
 
+        _, pred = output.topk(maxk, 1, True, True)
+        pred = pred.t()
+        correct = pred.eq(target.view(1, -1).expand_as(pred))
 
-def calc_metrics_from_loader(args, dset, loader, prober, criterion, debug=False):
-    """
-    Wrapping function for calc_metrics using a dataset and loader
-    """
+        res = []
+        for k in topk:
+            correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
+            res.append(correct_k.mul_(100.0 / batch_size))
+        return res
+
+def calc_entropy(input_tensor):
+    """Calculate entropy of input probabilities"""
+    lsm = nn.LogSoftmax(dim=1)
+    log_probs = lsm(input_tensor)  # batch, class
+    probs = torch.exp(log_probs)  # batch, class
+    p_log_p = log_probs * probs  # batch, class
+    entropy = -p_log_p.mean(dim=1)
+    return entropy
+
+class ECELoss(nn.Module):
+    """Expected Calibration Error Loss"""
+    def __init__(self, n_bins=15):
+        super().__init__()
+        bin_boundaries = torch.linspace(0, 1, n_bins + 1)
+        self.bin_lowers = bin_boundaries[:-1]
+        self.bin_uppers = bin_boundaries[1:]
+
+    def forward(self, logits, labels):
+        softmaxes = F.softmax(logits, dim=1)
+        confidences, predictions = torch.max(softmaxes, 1)
+        accuracies = predictions.eq(labels)
+
+        ece = torch.zeros(1, device=logits.device)
+        for bin_lower, bin_upper in zip(self.bin_lowers, self.bin_uppers):
+            in_bin = confidences.gt(bin_lower.item()) * confidences.le(bin_upper.item())
+            prop_in_bin = in_bin.float().mean()
+            if prop_in_bin.item() > 0:
+                accuracy_in_bin = accuracies[in_bin].float().mean()
+                avg_confidence_in_bin = confidences[in_bin].mean()
+                ece += torch.abs(avg_confidence_in_bin - accuracy_in_bin) * prop_in_bin
+        return ece
+
+def get_labels_and_onehot(dset):
+    """Return labels and one-hot encoded vectors from the dataset"""
     onehot_mat = np.eye(2)
 
     if isinstance(dset, torch.utils.data.ConcatDataset):
@@ -40,9 +77,13 @@ def calc_metrics_from_loader(args, dset, loader, prober, criterion, debug=False)
         label = dset.data["correct"]
         onehot = onehot_mat[dset.data["correct"]]
     else:
-        assert (
-            False
-        ), f"dset type: {type(dset)} is not cased in calc_metrics_from_loader"
+        raise ValueError(f"Unknown dataset type: {type(dset)}")
+
+    return label, onehot
+
+def calc_metrics_from_loader(args, dset, loader, prober, criterion, debug=False):
+    """Calculate all metrics from a data loader"""
+    label, onehot = get_labels_and_onehot(dset)
 
     print(label.shape, onehot.shape)
 
@@ -65,64 +106,45 @@ def calc_metrics_from_loader(args, dset, loader, prober, criterion, debug=False)
             print(f"{key} : {val:.4f}")
     return metric_vals
 
-
 def calc_metrics(args, loader, label, label_onehot, model, criterion):
-    (
-        acc,
-        softmax,
-        correct,
-        logit,
-        conf_correct,
-        conf_wrong,
-        ece_correct,
-        ece_wrong,
-        nll_correct,
-        nll_wrong,
-    ) = get_metric_values(args, loader, model, criterion)
-    # aurc, eaurc
-    aurc, eaurc = calc_aurc_eaurc(softmax, correct)
-    # fpr, aupr
-    auroc, aupr_success, aupr, fpr, tnr = calc_fpr_aupr(softmax, correct)
-    # calibration measure ece , mce, rmsce
-    ece = calc_ece(softmax, label, bins=15)
-    # brier, nll
-    nll, brier = calc_nll_brier(softmax, logit, label, label_onehot)
-    return (
-        acc,
-        auroc * 100,
-        aupr_success * 100,
-        aupr * 100,
-        fpr * 100,
-        tnr * 100,
-        aurc * 1000,
-        eaurc * 1000,
-        ece * 100,
-        nll * 10,
-        brier * 100,
-    )
+    vals = get_metric_values(args, loader, model, criterion)
+    acc, softmax, correct, logit = vals[:4]
+    conf_correct, conf_wrong = vals[4:6]
+    ece_correct, ece_wrong = vals[6:8]
+    nll_correct, nll_wrong = vals[8:10]
 
+    # Calculate various metrics
+    aurc, eaurc = calc_aurc_eaurc(softmax, correct)
+    auroc, aupr_success, aupr, fpr, tnr = calc_fpr_aupr(softmax, correct)
+    ece = calc_ece(softmax, label, bins=15)
+    nll, brier = calc_nll_brier(softmax, logit, label, label_onehot)
+    f1 = metrics.f1_score(label, np.argmax(softmax, axis=1))
+
+    return {
+        "acc": acc,
+        "auroc": auroc * 100,
+        "aupr_success": aupr_success * 100,
+        "aupr": aupr * 100,
+        "fpr": fpr * 100,
+        "tnr": tnr * 100,
+        "aurc": aurc * 1000,
+        "eaurc": eaurc * 1000,
+        "ece": ece * 100,
+        "nll": nll * 10,
+        "brier": brier * 100,
+        "f1": f1
+    }
 
 def calc_metrics_plot(args, loader, label, label_onehot, model, criterion):
-    (
-        acc,
-        softmax,
-        correct,
-        logit,
-        conf_correct,
-        conf_wrong,
-        ece_correct,
-        ece_wrong,
-        nll_correct,
-        nll_wrong,
-    ) = get_metric_values(args, loader, model, criterion)
-    # aurc, eaurc
+    vals = get_metric_values(args, loader, model, criterion)
+    acc, softmax, correct, logit = vals[:4]
+    conf_correct, conf_wrong = vals[4:6]
+    ece_correct, ece_wrong = vals[6:8]
+
     aurc, eaurc = calc_aurc_eaurc(softmax, correct)
-    # fpr, aupr
     auroc, aupr_success, aupr, fpr, tnr = calc_fpr_aupr(softmax, correct)
-    # calibration measure ece , mce, rmsce
     ece = calc_ece(softmax, label, bins=15)
-    # brier, nll
-    nll, brier = calc_nll_brier(softmax, logit, label, label_onehot)
+
     return (
         acc,
         auroc * 100,
@@ -135,25 +157,21 @@ def calc_metrics_plot(args, loader, label, label_onehot, model, criterion):
         ece_wrong * 100,
     )
 
-
-# AURC, EAURC
 def calc_aurc_eaurc(softmax, correct):
+    """Calculate AURC and EAURC metrics"""
     softmax = np.array(softmax)
     correctness = np.array(correct)
     softmax_max = np.max(softmax, 1)
 
-    sort_values = sorted(
-        zip(softmax_max[:], correctness[:]), key=lambda x: x[0], reverse=True
-    )
+    sort_values = sorted(zip(softmax_max[:], correctness[:]), key=lambda x: x[0], reverse=True)
     sort_softmax_max, sort_correctness = zip(*sort_values)
     risk_li, coverage_li = coverage_risk(sort_softmax_max, sort_correctness)
     aurc, eaurc = aurc_eaurc(risk_li)
 
     return aurc, eaurc
 
-
-# AUPR ERROR
 def calc_fpr_aupr(softmax, correct):
+    """Calculate FPR and AUPR metrics"""
     softmax = np.array(softmax)
     correctness = np.array(correct)
     softmax_max = np.max(softmax, 1)
@@ -164,9 +182,7 @@ def calc_fpr_aupr(softmax, correct):
     fpr_in_tpr_95 = fpr[idx_tpr_95]
     tnr_in_tpr_95 = 1 - fpr[np.argmax(tpr >= 0.95)]
 
-    precision, recall, thresholds = metrics.precision_recall_curve(
-        correctness, softmax_max
-    )
+    precision, recall, thresholds = metrics.precision_recall_curve(correctness, softmax_max)
     aupr_success = metrics.auc(recall, precision)
     aupr_err = metrics.average_precision_score(-1 * correctness + 1, -1 * softmax_max)
 
@@ -178,9 +194,8 @@ def calc_fpr_aupr(softmax, correct):
 
     return auroc, aupr_success, aupr_err, fpr_in_tpr_95, tnr_in_tpr_95
 
-
-# ECE
 def calc_ece(softmax, label, bins=15):
+    """Calculate Expected Calibration Error"""
     bin_boundaries = torch.linspace(0, 1, bins + 1)
     bin_lowers = bin_boundaries[:-1]
     bin_uppers = bin_boundaries[1:]
@@ -200,16 +215,13 @@ def calc_ece(softmax, label, bins=15):
         if prop_in_bin.item() > 0.0:
             accuracy_in_bin = correctness[in_bin].float().mean()
             avg_confidence_in_bin = softmax_max[in_bin].mean()
-
             ece += torch.abs(avg_confidence_in_bin - accuracy_in_bin) * prop_in_bin
 
     print("ECE {0:.2f} ".format(ece.item() * 100))
-
     return ece.item()
 
-
-# NLL & Brier Score
 def calc_nll_brier(softmax, logit, label, label_onehot):
+    """Calculate NLL and Brier score"""
     brier_score = np.mean(np.sum((softmax - label_onehot) ** 2, axis=1))
 
     logit = torch.tensor(logit, dtype=torch.float)
@@ -224,18 +236,15 @@ def calc_nll_brier(softmax, logit, label, label_onehot):
 
     return nll.item(), brier_score
 
-
-# Calc NLL
 def calc_nll(log_softmax, label):
+    """Calculate Negative Log Likelihood"""
     out = torch.zeros_like(label, dtype=torch.float)
     for i in range(len(label)):
         out[i] = log_softmax[i][label[i]]
-
     return -out.sum() / len(out)
 
-
-# Calc coverage, risk
 def coverage_risk(confidence, correctness):
+    """Calculate coverage and risk"""
     risk_list = []
     coverage_list = []
     risk = 0
@@ -245,17 +254,16 @@ def coverage_risk(confidence, correctness):
 
         if correctness[i] == 0:
             risk += 1
-
         risk_list.append(risk / (i + 1))
 
     return risk_list, coverage_list
 
-
-# Calc aurc, eaurc
 def aurc_eaurc(risk_list):
+    """Calculate AURC and EAURC from risk list"""
     r = risk_list[-1]
     risk_coverage_curve_area = 0
     optimal_risk_area = r + (1 - r) * np.log(1 - r)
+    
     for risk_value in risk_list:
         risk_coverage_curve_area += risk_value * (1 / len(risk_list))
 
@@ -267,9 +275,8 @@ def aurc_eaurc(risk_list):
 
     return aurc, eaurc
 
-
-# Get softmax, logit
 def get_metric_values(args, loader, model, criterion):
+    """Get all metric values from model predictions"""
     model.eval()
     with torch.no_grad():
         total_loss = 0.0
@@ -279,48 +286,36 @@ def get_metric_values(args, loader, model, criterion):
         list_softmax = []
         list_correct = []
         list_logit = []
-
         logits_list = []
         labels_list = []
         conf = []
         correct = []
 
-        # for input, target in loader:
         for idx, hidden, target, img, label in loader:
             hidden = hidden.cuda()
             target = target.long().cuda()
             output = model(hidden)
-            # if (
-            #     args.method == "classAug"
-            #     or args.method == "OpenMix"
-            #     or args.method == "OpenMix-CRL"
-            #     or args.method == "OpenMix-flat"
-            #     or args.method == "OpenMix_manifold"
-            # ):
-            #     output = output[:, : args.classnumber]
             loss = criterion(output, target).cuda()
+            
             logits_list.append(output.detach().cpu())
             labels_list.append(target.cpu())
             total_loss += loss.mean().item()
+            
             pred = output.data.max(1, keepdim=True)[1]
             prob, _pred = F.softmax(output, dim=1).max(1)
+            
             conf.append(prob.detach().cpu().view(-1).numpy())
             correct.append(_pred.cpu().eq(target.cpu().data.view_as(_pred)).numpy())
             total_acc += pred.eq(target.data.view_as(pred)).sum()
 
-            for i in output:
-                list_logit.append(i.cpu().data.numpy())
-
+            list_logit.extend(output.cpu().data.numpy())
             list_softmax.extend(F.softmax(output, dim=1).cpu().data.numpy())
 
             for j in range(len(pred)):
-                if pred[j] == target[j]:
-                    accuracy += 1
-                    cor = 1
-                else:
-                    cor = 0
-                list_correct.append(cor)
+                accuracy += 1 if pred[j] == target[j] else 0
+                list_correct.append(1 if pred[j] == target[j] else 0)
 
+        # Calculate additional metrics
         ece_criterion = ECELoss().cuda()
         nll_criterion = nn.CrossEntropyLoss().cuda()
 
@@ -329,24 +324,17 @@ def get_metric_values(args, loader, model, criterion):
         conf = np.concatenate(conf, axis=0)
         correct = np.concatenate(correct, axis=0)
         groud = np.ones_like(correct)
+        
         conf_wrong = np.mean(conf[groud ^ correct])
         conf_correct = np.mean(conf[correct])
-        ece_wrong = ece_criterion(
-            logits[groud ^ correct], labels[groud ^ correct]
-        ).item()
+        ece_wrong = ece_criterion(logits[groud ^ correct], labels[groud ^ correct]).item()
         ece_correct = ece_criterion(logits[correct], labels[correct]).item()
-
-        nll_wrong = nll_criterion(
-            logits[groud ^ correct], labels[groud ^ correct]
-        ).item()
+        nll_wrong = nll_criterion(logits[groud ^ correct], labels[groud ^ correct]).item()
         nll_correct = nll_criterion(logits[correct], labels[correct]).item()
 
         total_loss /= len(loader)
-        print(total_acc, len(loader.dataset))
         total_acc = 100.0 * total_acc.item() / len(loader.dataset)
-        print(total_acc)
-
-        print("Accuracy {:.2f}".format(total_acc))
+        print(f"Accuracy {total_acc:.2f}")
 
         list_softmax = np.array(list_softmax)
         list_logit = np.array(list_logit)
@@ -365,90 +353,4 @@ def get_metric_values(args, loader, model, criterion):
         nll_wrong,
     )
 
-
-class ECELoss(nn.Module):
-    def __init__(self, n_bins=15):
-        """
-        n_bins (int): number of confidence interval bins
-        """
-        super(ECELoss, self).__init__()
-        bin_boundaries = torch.linspace(0, 1, n_bins + 1)
-        self.bin_lowers = bin_boundaries[:-1]
-        self.bin_uppers = bin_boundaries[1:]
-
-    def forward(self, logits, labels):
-        softmaxes = F.softmax(logits, dim=1)
-        confidences, predictions = torch.max(softmaxes, 1)
-        accuracies = predictions.eq(labels)
-
-        ece = torch.zeros(1, device=logits.device)
-        for bin_lower, bin_upper in zip(self.bin_lowers, self.bin_uppers):
-            # Calculated |confidence - accuracy| in each bin
-            in_bin = confidences.gt(bin_lower.item()) * confidences.le(bin_upper.item())
-            prop_in_bin = in_bin.float().mean()
-            if prop_in_bin.item() > 0:
-                accuracy_in_bin = accuracies[in_bin].float().mean()
-                avg_confidence_in_bin = confidences[in_bin].mean()
-                ece += torch.abs(avg_confidence_in_bin - accuracy_in_bin) * prop_in_bin
-        return ece
-
-
-def main(parser):
-    from utils.get_data import HiddenDataset2
-    from utils.get_prober import ProberMNIST
-
-    args = parser.parse_args()
-    # run = wandb.init(project="proberMetric", config=args)
-
-    random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    cudnn.deterministic = True
-    cudnn.benchmark = False
-
-    train_set = HiddenDataset2(
-        "./outputs/<train hiddens path>"
-    )
-    mean, std = train_set.mean, train_set.std
-    val_set = HiddenDataset2(
-        "./outputs/<val hiddens path>",
-        mean=mean,
-        std=std,
-    )
-    train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
-    val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False)
-
-    prober = ProberMNIST()
-    prober.to(args.device)
-
-    cls_criterion = nn.CrossEntropyLoss().cuda()
-    metric_vals = calc_metrics_from_loader(
-        args, train_set, train_loader, prober, cls_criterion
-    )
-    metric_vals["dataset"] = "MNIST"
-    metric_vals["split"] = "train"
-
-    # wandb.log(metric_vals)
-
-def calc_entropy(input_tensor):
-    lsm = nn.LogSoftmax(dim=1)
-    log_probs = lsm(input_tensor)  # batch, class
-    probs = torch.exp(log_probs)  # batch, class
-    p_log_p = log_probs * probs  # batch, class
-    entropy = -p_log_p.mean(dim=1)
-    return entropy
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--hidden-data_path", type=str, default="./outputs/<hiddens path>"
-    )
-    parser.add_argument(
-        "--prober-ckpt",
-        type=str,
-        default="./outputs/<prober path>",
-    )
-    parser.add_argument("--batch-size", type=int, default=512)
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--device", type=str, default="cuda")
-
-    main(parser)
+# Add other metric calculation functions as needed... 

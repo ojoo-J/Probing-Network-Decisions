@@ -356,6 +356,7 @@ def get_dataset(dataset, data_dir):
                     ),
                 ]
             ),
+            download=True,
         )
 
         val_dataset = torchvision.datasets.CIFAR10(
@@ -369,6 +370,7 @@ def get_dataset(dataset, data_dir):
                     ),
                 ]
             ),
+            download=True,
         )
 
     elif dataset == "CIFAR100":

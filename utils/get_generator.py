@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-
+from collections import defaultdict
 from counterfactuals.adv import run_adv_attack
 from counterfactuals.generative_models.factory import get_generative_model
 from counterfactuals.utils import (
@@ -9,7 +9,7 @@ from counterfactuals.utils import (
     make_dir,
     torch_to_image,
 )
-
+from utils.compute_metrics import calc_entropy
 
 class CombinedNN(nn.Module):
     def __init__(self, classifier, prober, hidden_mean, hidden_std):
@@ -118,7 +118,7 @@ def adv_attack(
     optimizer = torch.optim.Adam(params=params, lr=lr, weight_decay=0.0)
 
     # run the adversarial attack
-    x_prime, step = run_adv_attack(
+    x_prime = run_adv_attack(
         x,
         z,
         optimizer,
@@ -164,8 +164,53 @@ def adv_attack(
     all_images.append(torch_to_image(x_prime))
     all_images.append(expl_to_image(heatmap))
 
-    return all_images, titles, cmaps, x_prime, step
+    return all_images, titles, cmaps, x_prime
     # _ = plot_grid_part(all_images, titles=titles, images_per_row=4, cmap=cmaps)
     # plt.subplots_adjust(
     #     wspace=0.03, hspace=0.01, left=0.03, right=0.97, bottom=0.01, top=0.95
     # )
+
+@torch.no_grad()
+def evaluate_all(data_loader, classifier, combinedNet, device):
+    import torch.nn.functional as F
+    vals = defaultdict(list)
+    for img, label in data_loader:
+        img = img.to(device)
+        label = torch.Tensor([int(l) for l in label]).to(device)
+
+        cls_out = classifier(img)
+        prober_out = combinedNet(img)
+
+        cls_prob = F.softmax(cls_out, dim=1)
+        prober_prob = F.softmax(prober_out, dim=1)
+
+        cls_pred = torch.argmax(cls_prob, dim=1)
+        prober_pred = torch.argmax(prober_prob, dim=1)
+
+        hidden = combinedNet(img)
+        correct = cls_pred == label
+
+        vals["image"].append(img)
+        vals["label"].append(label)
+        vals["hidden"].append(hidden)
+        vals["correct"].append(correct)
+
+        vals["clf_out"].append(cls_out)
+        vals["prb_out"].append(prober_out)
+
+        vals["clf_prob"].append(cls_prob)
+        vals["prb_prob"].append(prober_prob)
+
+        vals["clf_pred"].append(cls_pred)
+        vals["prb_pred"].append(prober_pred)
+
+    
+    for key, val in vals.items():
+        vals[key] = torch.cat(val, dim=0).detach().cpu()
+
+    for key in ["clf_prob", "prb_prob"]:
+        vals[f"{key}_max"] = vals[key].max(dim=1).values
+
+    vals["clf_prob_max"] = vals["clf_prob"].max(dim=1).values
+    vals["clf_entropy"] = calc_entropy(vals["clf_out"])
+    return vals
