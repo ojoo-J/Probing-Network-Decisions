@@ -125,7 +125,7 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", type=str, default="cuda")
-    parser.add_argument("--train-ratio", type=float, default=0.8)
+    parser.add_argument("--train-ratio", type=float, default=0.8, required=False)
     parser.add_argument("--label-smoothing", type=float, default=0.2)
     parser.add_argument("--loss-weight", type=float, default=4)
     parser.add_argument("--latent-dim1", type=int, default=256)
@@ -138,10 +138,7 @@ def main():
     updates = {"latent_dim": [args.latent_dim1, args.latent_dim2, args.latent_dim3]}
     args.__dict__.update(updates)
 
-    now = datetime.datetime.now()
-    save_dir = os.path.join(args.save_dir, now.strftime("%Y-%m-%d_%H%M%S"))
-    args.save_dir = save_dir
-    os.makedirs(save_dir, exist_ok=True)
+    os.makedirs(args.save_dir, exist_ok=False)
 
 
     random.seed(args.seed)
@@ -172,7 +169,6 @@ def main():
     ).to(args.device)
     print(prober)
 
-    # wandb.watch(prober)
 
     train(args, train_loader, val_loader, prober, prober_train_set, prober_val_set)
 

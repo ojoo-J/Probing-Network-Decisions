@@ -26,8 +26,6 @@ def split_dataset(train_set, val_set, train_ratio, save_dir, split="overlap"):
     #   * Maintains original dataset splits
     """
     
-    
-    
     if split == "overlap":
         add_train_size = int(train_ratio * len(val_set))
         val_size = len(val_set) - add_train_size
