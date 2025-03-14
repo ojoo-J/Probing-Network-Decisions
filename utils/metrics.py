@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Tuple, List
 import numpy as np
-from sklearn import metrics
+import sklearn.metrics
 
 @torch.no_grad()
 def accuracy(output: torch.Tensor, target: torch.Tensor, topk: Tuple[int] = (1,)) -> List[torch.Tensor]:
@@ -54,39 +54,53 @@ def get_labels_and_onehot(dset):
 
     return label, onehot
 
-def calc_metrics(args, loader, label, label_onehot, model, criterion):
+@torch.no_grad()
+def calculate_metrics(loader, model, device='cuda', in_type='image', out_type='correct'):
     """Calculate basic metrics from model predictions"""
     model.eval()
-    with torch.no_grad():
-        total_acc = 0
-        total_f1 = 0
-        n_batches = 0
+    total = 0
+    correct = 0
+    all_preds = []
+    all_targets = []
 
-        for idx, hidden, target, img, label in loader:
-            hidden = hidden.cuda()
-            target = target.long().cuda()
-            output = model(hidden)
-            
-            # Calculate accuracy
-            pred = output.data.max(1, keepdim=True)[1]
-            total_acc += pred.eq(target.data.view_as(pred)).sum().item()
-            
-            # Calculate F1 score
-            f1 = metrics.f1_score(
-                target.cpu().numpy(),
-                pred.cpu().numpy(),
-                average='binary'
-            )
-            total_f1 += f1
-            n_batches += 1
+    for batch in loader:
+        # Handle different batch formats
+        if isinstance(batch, tuple):
+            if len(batch) == 5:  # DataItem(index, hidden, correct, img, label)
+                x = getattr(batch, in_type)
+                target = getattr(batch, out_type)
+            elif len(batch) == 3:  # (idx, img, label)
+                _, x, target = batch
+            else:  # (img, label)
+                x, target = batch
+        else:  
+            raise ValueError(f"Unknown batch format: {type(batch)}")
+        
+        x = x.to(device)
+        target = target.to(device)
+        
+        # Forward pass
+        output = model(x)
+        pred = output.argmax(dim=1)
+        
+        # Accumulate metrics
+        total += target.size(0)
+        correct += pred.eq(target).sum().item()
+        
+        all_preds.extend(pred.cpu().numpy())
+        all_targets.extend(target.cpu().numpy())
 
-        avg_acc = (total_acc * 100.0) / len(loader.dataset)
-        avg_f1 = (total_f1 * 100.0) / n_batches
+    # Calculate metrics
+    accuracy = correct / total
+    f1 = sklearn.metrics.f1_score(all_targets, all_preds, average='binary')
+    tn, fp, fn, tp = sklearn.metrics.confusion_matrix(all_targets, all_preds).ravel()
+    fpr = fp / (fp + tn) if (fp + tn) > 0 else 0
 
-        return {
-            "acc": avg_acc,
-            "f1": avg_f1
-        }
+    return {
+        "acc": accuracy,
+        "f1": f1, 
+        "fpr": fpr
+    }
 
 @torch.no_grad()
 def get_metric_values(loader, model, device='cuda'):
@@ -99,11 +113,11 @@ def get_metric_values(loader, model, device='cuda'):
 
     for batch in loader:
         # Handle different batch formats
-        if len(batch) == 5:  # (idx, hidden, target, img, label)
+        if len(batch) == 5:  # (idx, hidden, correct, img, label)
             _, x, target = batch[:3]
-        elif len(batch) == 3:  # (idx, img, target)
+        elif len(batch) == 3:  # (idx, img, label)
             _, x, target = batch
-        else:  # (img, target)
+        else:  # (img, label)
             x, target = batch
         
         x = x.to(device)
@@ -120,7 +134,19 @@ def get_metric_values(loader, model, device='cuda'):
         all_preds.extend(pred.cpu().numpy())
         all_targets.extend(target.cpu().numpy())
 
+    # Calculate accuracy
+    accuracy = correct / total
+
+    # Calculate F1 score
+    f1 = sklearn.metrics.f1_score(all_targets, all_preds, average='binary')
+
+    # Calculate False Positive Rate (FPR)
+    tn, fp, fn, tp = sklearn.metrics.confusion_matrix(all_targets, all_preds).ravel()
+    fpr = fp / (fp + tn) if (fp + tn) > 0 else 0
+    fpr = fpr
+
     return {
-        "accuracy": 100. * correct / total,
-        "f1": metrics.f1_score(all_targets, all_preds, average='binary') * 100
+        "acc": accuracy,
+        "f1": f1,
+        "fpr": fpr
     }

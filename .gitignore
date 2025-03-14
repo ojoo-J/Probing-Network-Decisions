@@ -177,3 +177,5 @@ MNIST_realNVP.pth
 pytest.ini
 tests/
 conftest.py
+scripts/tmp.sh
+experiments/generate_counterfactual_tmp.py

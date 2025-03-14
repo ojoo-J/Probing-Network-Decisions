@@ -4,7 +4,10 @@ import torchvision.transforms as transforms
 from torch.utils.data import Dataset, DataLoader
 from typing import Tuple, Optional
 import pickle
-import numpy as np
+from collections import namedtuple
+
+# Define a named tuple for the data structure
+DataItem = namedtuple('DataItem', ['index', 'hidden', 'correct', 'image', 'label'])
 
 class BaseDataset:
     def __init__(self, data_dir: str, batch_size: int = 32, normalize: bool = False):
@@ -71,7 +74,8 @@ class ImageNet(BaseDataset):
         )
 
 class HiddenDataset(Dataset):
-    def __init__(self, hidden_data_path: str, mean: Optional[float] = None, std: Optional[float] = None):
+    """Dataset for hidden features with statistics and visualization"""
+    def __init__(self, hidden_data_path, mean=None, std=None):
         self.data_path = hidden_data_path
         with open(self.data_path, "rb") as fr:
             self.data = pickle.load(fr)
@@ -111,12 +115,12 @@ class HiddenDataset(Dataset):
         return len(self.data["hidden"])
 
     def __getitem__(self, idx):
-        return (
-            self.data['index'][idx],
-            self.data['hidden'][idx],
-            self.data['correct'][idx],
-            self.data['image'][idx],
-            self.data['label'][idx],
+        return DataItem(
+            index=self.data['index'][idx],
+            hidden=self.data['hidden'][idx],
+            correct=self.data['correct'][idx],
+            image=self.data['image'][idx],
+            label=self.data['label'][idx]
         )
     
     def get_stat(self):

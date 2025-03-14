@@ -5,7 +5,7 @@ from collections import defaultdict
 from torch.utils.data import random_split
 import torch.utils.data
 
-def split_dataset(train_set, val_set, train_ratio, save_dir, split="overlap"):
+def split_dataset(train_set, val_set, train_ratio=None, save_dir=None, split="overlap"):
     # MNIST original split train : valid = 60000 : 10000
     # CIFAR10 original split train : valid = 50000 : 10000
     """
@@ -36,7 +36,7 @@ def split_dataset(train_set, val_set, train_ratio, save_dir, split="overlap"):
         split_dict = defaultdict(list)
         split_dict["train"] = train_set.data["index"]
         split_dict["test"] = (
-            np.array(val_set.data["index"])[prober_val_set.indices]
+            val_set.data["index"][prober_val_set.indices]
         ).tolist()
         split_dict["inter"] = sorted(set(val_set.data["index"]) - set(split_dict["test"]))
         split_dict["prober_train"] = sorted(
@@ -53,10 +53,10 @@ def split_dataset(train_set, val_set, train_ratio, save_dir, split="overlap"):
         split_dict["train"] = train_set.data["index"]
         split_dict["test"] = val_set.data["index"]
         split_dict["prober_train"] = (
-            np.array(val_set.data["index"])[prober_train_set.indices]
+            val_set.data["index"][prober_train_set.indices]
         ).tolist()
         split_dict["prober_valid"] = (
-            np.array(val_set.data["index"])[prober_val_set.indices]
+            val_set.data["index"][prober_val_set.indices]
         ).tolist()
 
     elif split == "mirror":
@@ -72,8 +72,9 @@ def split_dataset(train_set, val_set, train_ratio, save_dir, split="overlap"):
     else:
         assert False, "split should be one of overlap, separate, or mirror"
     
-    with open(os.path.join(save_dir, "split.json"), "w") as fw:
-        json.dump(split_dict, fw, indent=2)
+    if save_dir is not None:
+        with open(os.path.join(save_dir, "split.json"), "w") as fw:
+            json.dump(split_dict, fw, indent=2, default=lambda x: x.tolist() if isinstance(x, np.ndarray) else x)
 
     return prober_train_set, prober_val_set, split_dict
 

@@ -119,10 +119,10 @@ class ResNet(nn.Module):
         self.load_state_dict(state_dict)
 
 class Prober(nn.Module):
-    def __init__(self, input_dim=256, hidden_dims=[128, 64]):
+    def __init__(self, hidden_dims=[128, 64]):
         super().__init__()
         layers = []
-        dims = [input_dim] + hidden_dims + [2]
+        dims = hidden_dims + [2]
         for i in range(len(dims)-1):
             layers.extend([
                 nn.Linear(dims[i], dims[i+1]),
@@ -196,25 +196,52 @@ class Prober(nn.Module):
             print(f'Val Loss: {val_metrics["loss"]:.4f}, Val Acc: {val_metrics["accuracy"]:.2f}%')
 
 class CombinedNN(nn.Module):
-    def __init__(self, classifier, prober, hidden_mean, hidden_std):
+    def __init__(self, classifier: nn.Module, prober: nn.Module, hidden_mean: float, hidden_std: float, prober_layer_name: str):
         super().__init__()
         self.classifier = classifier
         self.prober = prober
         self.hidden_mean = hidden_mean
         self.hidden_std = hidden_std
-        
+        self.intermediate_output = None  # To store the intermediate representation
+
         # Freeze both models
         for model in [self.classifier, self.prober]:
             for param in model.parameters():
                 param.requires_grad = False
 
-    def forward(self, x):
-        hidden = self.classifier(x)
-        hidden = (hidden - self.hidden_mean) / self.hidden_std
+        self.register_hook(prober_layer_name)
+
+    def register_hook(self, layer_name: str):
+        """Register a hook to capture the output of a specific layer."""
+        def hook(module, input, output):
+            self.intermediate_output = output
+
+        # Find the layer by name and register the hook
+        layer = dict(self.classifier.named_modules()).get(layer_name)
+        if layer is not None:
+            layer.register_forward_hook(hook)
+        else:
+            raise ValueError(f"Layer '{layer_name}' not found in the classifier.")
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Clear the previous intermediate output
+        self.intermediate_output = None
+        
+        # This will trigger the hook if set up
+        _ = self.classifier(x)
+        hidden = self.intermediate_output
+        
+        # Normalize the hidden representation
+        # normalized_hidden = self.normalize(hidden)
+        
+        # Pass the normalized hidden representation to the prober
         return self.prober(hidden)
 
+    def normalize(self, hidden: torch.Tensor) -> torch.Tensor:
+        return (hidden - self.hidden_mean) / self.hidden_std
+
     @torch.no_grad()
-    def evaluate_all(self, data_loader, device):
+    def evaluate_all(self, data_loader: torch.utils.data.DataLoader, device: str) -> dict:
         self.eval()
         vals = defaultdict(list)
         for img, label in data_loader:
@@ -239,45 +266,7 @@ class CombinedNN(nn.Module):
             
         return {k: torch.cat(v).cpu() for k, v in vals.items()}
 
-class MNISTFlow(nn.Module):
-    """Flow-based generator for MNIST"""
-    def __init__(self, device="cuda"):
-        super().__init__()
-        self.device = device
-        self.data_info = {
-            "data_set": "MNIST",
-            "data_shape": [1, 28, 28],
-            "n_bits": 8,
-            "temp": 1,
-            "num_classes": 10,
-            "class_names": ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"],
-            "data_mean": [0.1307],
-            "data_std": [0.3081],
-        }
-        
-        # Import here to avoid circular imports
-        from counterfactuals.generative_models.factory import get_generative_model
-        self.model, self.model_type = get_generative_model(
-            generative_model_type="Flow", 
-            data_info=self.data_info, 
-            device=device
-        )
-        
-    def encode(self, x):
-        return self.model.encode(x)
-        
-    def decode(self, z):
-        return self.model.decode(z)
-        
-    def forward(self, x):
-        return self.model(x)
 
-    def load_pretrained(self, path):
-        if path is None:
-            return
-        checkpoint = torch.load(path)
-        state_dict = checkpoint["state_dict"] if "state_dict" in checkpoint else checkpoint
-        self.load_state_dict(state_dict)
 
 # Factory functions with dataset-specific configurations
 def get_classifier(dataset, ckpt_path=None):
@@ -301,11 +290,35 @@ def get_prober(dataset, ckpt_path=None, **kwargs):
 def get_generator(dataset, ckpt_path=None, device='cuda'):
     """Get generator model"""
     if dataset.lower() == 'mnist':
-        model = MNISTFlow(device=device)
-        if ckpt_path:
-            model.load_pretrained(ckpt_path)
-        return model
-    raise ValueError(f"Generator not implemented for dataset: {dataset}")
+        # Integrate MNISTFlow functionality here
+        data_info = {
+            "data_set": "MNIST",
+            "data_shape": [1, 28, 28],
+            "n_bits": 8,
+            "temp": 1,
+            "num_classes": 10,
+            "class_names": ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"],
+            "data_mean": [0.1307],
+            "data_std": [0.3081],
+        }
+        
+        # Import here to avoid circular imports
+        from counterfactuals.generative_models.factory import get_generative_model
+        generator, model_type = get_generative_model(
+            generative_model_type="Flow", 
+            data_info=data_info, 
+            device=device
+        )
 
-def get_combined(classifier, prober, hidden_mean, hidden_std):
-    return CombinedNN(classifier, prober, hidden_mean, hidden_std) 
+        def load_pretrained(model, path):
+            if path is None:
+                return
+            checkpoint = torch.load(path)
+            state_dict = checkpoint["state_dict"] if "state_dict" in checkpoint else checkpoint
+            model.load_state_dict(state_dict)
+            model.eval()
+
+        if ckpt_path:
+            load_pretrained(generator, ckpt_path)
+        return generator
+    raise ValueError(f"Generator not implemented for dataset: {dataset}")
