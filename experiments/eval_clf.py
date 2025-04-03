@@ -2,10 +2,14 @@ import argparse
 import os
 import pickle
 import random
+import sys
 import torch
 import torch.backends.cudnn as cudnn
 import torch.nn as nn
 from tqdm import tqdm
+
+# Add project root to system path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models import get_classifier
 from data.datasets import get_dataset
