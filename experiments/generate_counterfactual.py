@@ -10,6 +10,9 @@ from torchmetrics.classification import BinaryStatScores
 import signal
 import sys
 
+# Add project root to system path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import matplotlib.pyplot as plt
 import numpy as np
 import torch

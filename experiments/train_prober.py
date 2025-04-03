@@ -2,6 +2,7 @@ import argparse
 import datetime
 import math
 import os
+import sys
 import random
 
 import torch
@@ -12,6 +13,9 @@ from torcheval.metrics.functional import binary_f1_score
 from torchmetrics.classification import BinaryStatScores
 from torchvision import datasets, models, transforms
 from tqdm.auto import tqdm
+
+# Add project root to system path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from data.datasets import get_dataset, HiddenDataset
 from data.utils import split_dataset
