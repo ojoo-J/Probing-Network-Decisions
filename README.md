@@ -47,17 +47,52 @@ By using the prober to generate counterfactuals that reduce the uncertainty of t
 When the misclassified (True miss) images are edited and fed back into the neural network, we observe an approximately 87% improvement in performance. This demonstrates the potential of the neural network’s auto-correction capability.
 
 ## run
-Given a trained classifier and generative network, follow these steps to: (1) evaluate the representation, (2) train a prober to model the implicit probability, and (3) generate counterfactual examples. You can refer to `scripts/run_mnist.sh` for example usage.
+Given a trained classifier and generative network, follow these steps to: (1) evaluate the representation, (2) train a prober to model the implicit probability, and (3) generate counterfactual examples. You can refer to the following shell example (`scripts/run_mnist.sh`)
+
 
 ```
 # Evaluate the representation
-python experiments/eval_clf.py
+python -m experiments.eval_clf \
+    --dataset MNIST \
+    --data-dir /project/prev/NNV/data \
+    --save-dir /project/outputs \
+    --arch CNN \
+    --ckpt-path /project/run/MNIST_CNN.pth \
+    --seed 0 \
+    --layer-name fc_layer.4 \
+    --acc-n 5
 ```
 ```
 # Train the Prober
-python experiments/train_prober.py
+
+python -m experiments.train_prober \
+    --dataset MNIST \
+    --train-path /project/outputs/MNIST_fc_layer-4th-layer-acc1_train_59165-835.pkl \
+    --valid-path /project/outputs/MNIST_fc_layer-4th-layer-acc1_valid_9850-150.pkl \
+    --save-dir /project/outputs \
+    --epochs 2 \
+    --batch-size 128 \
+    --train-ratio 0.8 \
+    --lr 1e-3 \
+    --label-smoothing 0.2 \
+    --latent-dim1 256 \
+    --latent-dim2 128 \
+    --latent-dim3 64 \
+    --split add
 ```
 ```
 # Generate the counterfactuals (corrected samples)
-python experiments/generate_counterfactual.py
+python -m experiments.generate_counterfactual \
+    --data-dir /project/prev/NNV/data \
+    --dataset MNIST \
+    --save-dir /project/outputs \
+    --steps 5000 \
+    --batch-size 128 \
+    --lr 1e-1 \
+    --seed 0 \
+    --device cuda \
+    --cls-ckpt-path /project/run/MNIST_CNN.pth \
+    --prober-ckpt-path /project/outputs/2025-03-12_094415/prober_ep-09_lr-0.001_acc-0.9835_f1-0.9915.pth \
+    --g-ckpt-path /project/run/MNIST_realNVP.pth \
+    --index-path /project/outputs/2025-03-12_094415/split.json 
 ```

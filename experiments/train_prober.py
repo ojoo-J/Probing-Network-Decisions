@@ -1,12 +1,16 @@
 import sys
 import argparse
 import os
+import sys
 import random
 import torch
 import torch.backends.cudnn as cudnn
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
+
+# Add project root to system path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from data.datasets import get_dataset, HiddenDataset
 from data.utils import split_dataset
