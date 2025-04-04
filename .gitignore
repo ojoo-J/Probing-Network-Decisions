@@ -170,7 +170,7 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-
+notebooks/
 outputs/
 MNIST_CNN.pth
 MNIST_realNVP.pth

@@ -25,7 +25,7 @@
 python -m experiments.generate_counterfactual \
     --data-dir /project/prev/NNV/data \
     --dataset MNIST \
-    --save-dir /project/outputs/smoothing-0.2_lr-1e-2/valid \
+    --save-dir /project/run/outputs/valid/false_miss \
     --steps 1000 \
     --batch-size 128 \
     --lr 1e-4 \
@@ -39,4 +39,4 @@ python -m experiments.generate_counterfactual \
     --prober-valid-path /project/outputs/MNIST_fc_layer.4_acc1_valid_10000.pkl \
     --prober-layer-name fc_layer.4 \
     --g-ckpt-path /project/run/MNIST_realNVP.pth \
-    --index-path /project/outputs/smoothing-0.2_lr-1e-2/split.json
+    --index-path /project/outputs/smoothing-0.2_lr-1e-2/split.json &

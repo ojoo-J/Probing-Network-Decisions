@@ -19,7 +19,6 @@ from models import (
     CombinedNN,
 )
 from data import get_dataset, split_dataset
-from counterfactuals.adv import run_adv_attack
 from counterfactuals.utils import (
     expl_to_image,
     torch_to_image,
@@ -284,7 +283,7 @@ def main(args):
     train_loader = DataLoader(
         train_set, batch_size=args.batch_size, shuffle=True
     )
-    val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False)
+    val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=True)
 
     # Create combined model
     net = CombinedNN(
@@ -320,6 +319,15 @@ def main(args):
     )[0]
     interested_indices = sorted(interested_indices)
     print(f'True Negatives: {len(interested_indices)}')
+    
+        ##### False Miss Case
+    interested_indices = torch.where(
+        (valid_vals["label"] == valid_vals["clf_pred"])
+        & (valid_vals["prb_pred"] == 0)
+    )[0]
+    interested_indices = torch.where((valid_vals["prb_pred"] == 0))[0]
+    interested_indices = sorted(interested_indices)
+    print(f'False Neg: {len(interested_indices)}')
 
     # # Generate and save counterfactuals
     os.makedirs(args.save_dir, exist_ok=True)
