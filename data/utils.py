@@ -5,14 +5,28 @@ from collections import defaultdict
 from torch.utils.data import random_split
 import torch.utils.data
 
-def split_dataset(train_set, val_set, train_ratio, save_dir, split="add"):
+def split_dataset(train_set, val_set, train_ratio=None, save_dir=None, split="overlap"):
     # MNIST original split train : valid = 60000 : 10000
-    ### Change to train : valid = 6 + 0.8 : 0.2
-
     # CIFAR10 original split train : valid = 50000 : 10000
-    ### Change to train : valid = 6 + 0.8 : 0.2 
+    """
+    # Split options:
+    # - "overlap": Uses validation set data for both training and validation
+    #   * Takes portion of validation set and adds it to training set
+    #   * Remaining validation data used for probing validation
+    #   * Results in overlapping data between classifier and prober training
+    #
+    # - "separate": Keeps classifier and prober data separate
+    #   * Uses original training data only for classifier
+    #   * Splits validation set into prober train/val sets
+    #   * Ensures no overlap between classifier and prober data
+    #
+    # - "mirror": Uses same splits as original classifier
+    #   * Training data used for both classifier and prober training
+    #   * Validation data used for both classifier and prober validation
+    #   * Maintains original dataset splits
+    """
     
-    if split == "add":
+    if split == "overlap":
         add_train_size = int(train_ratio * len(val_set))
         val_size = len(val_set) - add_train_size
 
@@ -22,7 +36,7 @@ def split_dataset(train_set, val_set, train_ratio, save_dir, split="add"):
         split_dict = defaultdict(list)
         split_dict["train"] = train_set.data["index"]
         split_dict["test"] = (
-            np.array(val_set.data["index"])[prober_val_set.indices]
+            val_set.data["index"][prober_val_set.indices]
         ).tolist()
         split_dict["inter"] = sorted(set(val_set.data["index"]) - set(split_dict["test"]))
         split_dict["prober_train"] = sorted(
@@ -30,7 +44,7 @@ def split_dataset(train_set, val_set, train_ratio, save_dir, split="add"):
         )
         split_dict["prober_valid"] = split_dict["test"]
         
-    elif split == "disjoint":
+    elif split == "separate":
         train_size = int(train_ratio * len(val_set))
         val_size = len(val_set) - train_size
         prober_train_set, prober_val_set = random_split(val_set, [train_size, val_size])
@@ -39,13 +53,13 @@ def split_dataset(train_set, val_set, train_ratio, save_dir, split="add"):
         split_dict["train"] = train_set.data["index"]
         split_dict["test"] = val_set.data["index"]
         split_dict["prober_train"] = (
-            np.array(val_set.data["index"])[prober_train_set.indices]
+            val_set.data["index"][prober_train_set.indices]
         ).tolist()
         split_dict["prober_valid"] = (
-            np.array(val_set.data["index"])[prober_val_set.indices]
+            val_set.data["index"][prober_val_set.indices]
         ).tolist()
 
-    elif split == "cls":
+    elif split == "mirror":
         prober_train_set = train_set
         prober_val_set = val_set
         
@@ -56,10 +70,11 @@ def split_dataset(train_set, val_set, train_ratio, save_dir, split="add"):
         split_dict["prober_valid"] = val_set.data["index"]
         
     else:
-        assert False, "split should be one of add, disjoint, or cls"
+        assert False, "split should be one of overlap, separate, or mirror"
     
-    with open(os.path.join(save_dir, "split.json"), "w") as fw:
-        json.dump(split_dict, fw, indent=2)
+    if save_dir is not None:
+        with open(os.path.join(save_dir, "split.json"), "w") as fw:
+            json.dump(split_dict, fw, indent=2, default=lambda x: x.tolist() if isinstance(x, np.ndarray) else x)
 
     return prober_train_set, prober_val_set, split_dict
 

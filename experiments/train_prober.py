@@ -1,17 +1,12 @@
+import sys
 import argparse
-import datetime
-import math
 import os
 import sys
 import random
-
 import torch
 import torch.backends.cudnn as cudnn
 import torch.nn as nn
-from torch.utils.data import DataLoader, Dataset, Subset, random_split
-from torcheval.metrics.functional import binary_f1_score
-from torchmetrics.classification import BinaryStatScores
-from torchvision import datasets, models, transforms
+from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
 # Add project root to system path
@@ -20,41 +15,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data.datasets import get_dataset, HiddenDataset
 from data.utils import split_dataset
 from models import get_prober
-from utils.metrics import get_labels_and_onehot, calc_metrics
-
-
-@torch.no_grad()
-def eval(args, data_loader, prober, criterion):
-    """Evaluate prober model"""
-    prober.eval()
-    metric = BinaryStatScores().to(args.device)
-    pred_list = []
-    correct_list = []
-    running_loss = 0.0
-
-    for i, (idx, hiddens, corrects, _, _) in enumerate(data_loader):
-        hiddens = hiddens.to(args.device)
-        corrects = corrects.to(args.device)
-
-        output = prober(hiddens)
-        preds = output.argmax(dim=1)
-        running_loss += criterion(output, corrects).item()
-
-        pred_list.append(preds)
-        correct_list.append(corrects)
-
-    pred_list = torch.cat(pred_list)
-    correct_list = torch.cat(correct_list)
-
-    # Calculate metrics
-    acc = (pred_list == correct_list).sum().float() / len(pred_list)
-    f1 = binary_f1_score(pred_list, correct_list)
-    stats = metric(pred_list, correct_list)
-
-    print(f"\n ========= ⭐️ eval acc: {acc:.4f} / f1: {f1:.4f} ⭐️ ========= ")
-    print(f"Stats: {stats}")
-
-    return running_loss / len(data_loader), acc, f1, pred_list, correct_list
+from utils.metrics import get_labels_and_onehot, calculate_metrics
 
 
 def train(args, train_loader, val_loader, prober, train_set, val_set):
@@ -68,11 +29,12 @@ def train(args, train_loader, val_loader, prober, train_set, val_set):
     train_label, train_onehot = get_labels_and_onehot(train_set)
     val_label, val_onehot = get_labels_and_onehot(val_set)
 
-    for epoch in range(args.epochs):
+    pbar = tqdm(range(args.epochs), desc="Train Epochs", position=0, leave=True)
+    for epoch in pbar:
         # Train
         prober.train()
         train_loss = 0
-        for i, (idx, hiddens, corrects, _, _) in enumerate(tqdm(train_loader)):
+        for i, (idx, hiddens, corrects, _, _) in enumerate(train_loader):
             hiddens = hiddens.to(args.device)
             corrects = corrects.to(args.device)
 
@@ -86,23 +48,30 @@ def train(args, train_loader, val_loader, prober, train_set, val_set):
             train_loss += loss.item()
 
         train_loss = train_loss / len(train_loader)
-        print(f"\n ========= ⭐️ train (epoch-{epoch}) loss: {train_loss:.4f} ⭐️ ========= ")
-
+        
         # Evaluate
-        train_metrics = calc_metrics(args, train_loader, train_label, train_onehot, prober, criterion)
-        val_metrics = calc_metrics(args, val_loader, val_label, val_onehot, prober, criterion)
+        train_metrics = calculate_metrics(train_loader, prober, in_type='hidden', out_type='correct')
+        val_metrics = calculate_metrics(val_loader, prober, in_type='hidden', out_type='correct')
 
-        print(epoch, args.lr, val_metrics['acc'], val_metrics['f1'])
+        pbar.set_postfix({
+            "[Train] Acc": f"{train_metrics['acc']:.4f}",
+            "F1": f"{train_metrics['f1']:.4f}",
+            "FPR": f"{train_metrics['fpr']:.4f}",
+            "[Val] Acc": f"{val_metrics['acc']:.4f}",
+            "F1": f"{val_metrics['f1']:.4f}",
+            "FPR": f"{val_metrics['fpr']:.4f}"
+        })
+
         # Save checkpoint
         save_path = os.path.join(
             args.save_dir,
-            f"prober_ep-{epoch:02d}_lr-{args.lr}_acc-{val_metrics['acc']:.4f}_f1-{val_metrics['f1']:.4f}.pth"
+            f"prober_ep-{epoch+1:02d}_lr-{args.lr}_acc-{val_metrics['acc']:.4f}_fpr-{val_metrics['fpr']:.4f}.pth"
         )
         torch.save(prober.state_dict(), save_path)
 
         # Early stopping
         if val_metrics['fpr'] > 90 and epoch > 30:
-            print(f"Early stopping at epoch {epoch}, FPR: {val_metrics['fpr']:.4f}")
+            print(f"Early stopping at epoch {epoch+1}, FPR: {val_metrics['fpr']:.4f}")
             break
 
 
@@ -129,24 +98,14 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", type=str, default="cuda")
-    parser.add_argument("--train-ratio", type=float, default=0.8)
+    parser.add_argument("--train-ratio", type=float, default=None, required=False)
     parser.add_argument("--label-smoothing", type=float, default=0.2)
     parser.add_argument("--loss-weight", type=float, default=4)
-    parser.add_argument("--latent-dim1", type=int, default=256)
-    parser.add_argument("--latent-dim2", type=int, default=128)
-    parser.add_argument("--latent-dim3", type=int, default=64)
-    parser.add_argument("--split", type=str, default="add")
+    parser.add_argument("--latent-dims", type=int, nargs='+', default=[256, 128, 64])
+    parser.add_argument("--split", type=str, default="mirror")
     args = parser.parse_args()
     
-
-    updates = {"latent_dim": [args.latent_dim1, args.latent_dim2, args.latent_dim3]}
-    args.__dict__.update(updates)
-
-    now = datetime.datetime.now()
-    save_dir = os.path.join(args.save_dir, now.strftime("%Y-%m-%d_%H%M%S"))
-    args.save_dir = save_dir
-    os.makedirs(save_dir, exist_ok=True)
-
+    os.makedirs(args.save_dir, exist_ok=True)
 
     random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -154,8 +113,8 @@ def main():
     cudnn.benchmark = False
 
     train_set = get_dataset('hidden', hidden_data_path=args.train_path)
-    mean, std = train_set.mean, train_set.std
-    val_set = get_dataset('hidden', hidden_data_path=args.valid_path, mean=mean, std=std)
+    hidden_mean, hidden_std = train_set.mean, train_set.std
+    val_set = get_dataset('hidden', hidden_data_path=args.valid_path, mean=hidden_mean, std=hidden_std)
     
 
     prober_train_set, prober_val_set, split_dict = split_dataset(
@@ -171,12 +130,10 @@ def main():
 
     prober = get_prober(
         dataset=args.dataset,
-        input_dim=args.latent_dim1,
-        hidden_dims=[args.latent_dim2, args.latent_dim3]
+        hidden_dims=args.latent_dims
     ).to(args.device)
     print(prober)
 
-    # wandb.watch(prober)
 
     train(args, train_loader, val_loader, prober, prober_train_set, prober_val_set)
 

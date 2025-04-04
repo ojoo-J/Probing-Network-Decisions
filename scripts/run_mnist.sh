@@ -8,33 +8,35 @@
 #     --ckpt-path /project/run/MNIST_CNN.pth \
 #     --seed 0 \
 #     --layer-name fc_layer.4 \
-#     --acc-n 5
+#     --acc-n 1
 
 # python -m experiments.train_prober \
 #     --dataset MNIST \
-#     --train-path /project/outputs/MNIST_fc_layer-4th-layer-acc1_train_59165-835.pkl \
-#     --valid-path /project/outputs/MNIST_fc_layer-4th-layer-acc1_valid_9850-150.pkl \
-#     --save-dir /project/outputs \
-#     --epochs 2 \
+#     --train-path /project/outputs/MNIST_fc_layer.4_acc1_train_60000.pkl \
+#     --valid-path /project/outputs/MNIST_fc_layer.4_acc1_valid_10000.pkl \
+#     --save-dir /project/outputs/smoothing-0.2_lr-1e-2 \
+#     --epochs 30 \
 #     --batch-size 128 \
-#     --train-ratio 0.8 \
-#     --lr 1e-3 \
+#     --lr 1e-2 \
 #     --label-smoothing 0.2 \
-#     --latent-dim1 256 \
-#     --latent-dim2 128 \
-#     --latent-dim3 64 \
-#     --split add
+#     --latent-dims 256 128 64 \
+#     --split mirror
 
-# python -m experiments.generate_counterfactual \
-#     --data-dir /project/prev/NNV/data \
-#     --dataset MNIST \
-#     --save-dir /project/outputs \
-#     --steps 5000 \
-#     --batch-size 128 \
-#     --lr 1e-1 \
-#     --seed 0 \
-#     --device cuda \
-#     --cls-ckpt-path /project/run/MNIST_CNN.pth \
-#     --prober-ckpt-path /project/outputs/2025-03-12_094415/prober_ep-09_lr-0.001_acc-0.9835_f1-0.9915.pth \
-#     --g-ckpt-path /project/run/MNIST_realNVP.pth \
-#     --index-path /project/outputs/2025-03-12_094415/split.json 
+python -m experiments.generate_counterfactual \
+    --data-dir /project/prev/NNV/data \
+    --dataset MNIST \
+    --save-dir /project/run/outputs/valid/false_miss \
+    --steps 1000 \
+    --batch-size 128 \
+    --lr 1e-4 \
+    --seed 0 \
+    --device cuda \
+    --cls-ckpt-path /project/run/MNIST_CNN.pth \
+    --prober-ckpt-path /project/outputs/smoothing-0.2_lr-1e-2/prober_ep-16_lr-0.01_acc-0.9787_fpr-0.1733.pth \
+    --prober-dims 256 128 64 \
+    --prober-split mirror \
+    --prober-train-path /project/outputs/MNIST_fc_layer.4_acc1_train_60000.pkl \
+    --prober-valid-path /project/outputs/MNIST_fc_layer.4_acc1_valid_10000.pkl \
+    --prober-layer-name fc_layer.4 \
+    --g-ckpt-path /project/run/MNIST_realNVP.pth \
+    --index-path /project/outputs/smoothing-0.2_lr-1e-2/split.json

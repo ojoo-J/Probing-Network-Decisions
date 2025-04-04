@@ -1,7 +1,9 @@
 import argparse
 import os
 import pickle
+import json
 import random
+import numpy as np
 import sys
 import torch
 import torch.backends.cudnn as cudnn
@@ -61,6 +63,7 @@ def setup_model(args):
 
     return model, features
 
+@torch.no_grad()
 def evaluate(args, model, features, data_loader, split="train"):
     """Evaluate model and save features"""
     correct = []
@@ -70,41 +73,42 @@ def evaluate(args, model, features, data_loader, split="train"):
     indices = []  # Start with empty list
     base_idx = 0  # Keep track of current index
 
-    with torch.no_grad():
-        for i, batch in enumerate(tqdm(data_loader)):
-            # Handle both (img, target) and (idx, img, target) formats
-            if len(batch) == 3:
-                idx, img, target = batch
-            else:
-                img, target = batch
-                # Generate sequential indices for this batch
-                idx = list(range(base_idx, base_idx + len(img)))
-                base_idx += len(img)
 
-            img = img.cuda()
-            target = target.cuda()
+    for i, batch in enumerate(tqdm(data_loader)):
+        # Handle both (img, target) and (idx, img, target) formats
+        if len(batch) == 3:
+            idx, img, target = batch
+        else:
+            img, target = batch
+            # Generate sequential indices for this batch
+            idx = list(range(base_idx, base_idx + len(img)))
+            base_idx += len(img)
 
-            # Forward pass
-            output = model(img)
-            acc = accuracy(output, target, topk=(1, args.acc_n))
+        img = img.cuda()
+        target = target.cuda()
 
-            # Get features and other data
-            for k, v in features.items():
-                hiddens.append(v.cpu())
-            correct.extend(acc[0].cpu().numpy())
-            images.append(img.cpu())
-            labels.extend(target.cpu().numpy())
-            indices.extend(idx if isinstance(idx, list) else idx.tolist())
+        # Forward pass
+        output = model(img)
+        acc, correct_batch = accuracy(output, target, topk=(1, args.acc_n))
+        
+        # Get features and other data
+        for k, v in features.items():
+            hiddens.append(v.cpu())
+
+        correct.extend(correct_batch.cpu().numpy()) # binary label: hit or miss
+        images.append(img.cpu().numpy())
+        labels.extend(target.cpu().numpy())
+        indices.extend(idx if isinstance(idx, list) else idx.tolist())
 
     # Save results
     os.makedirs(args.save_dir, exist_ok=True)
     for k in features.keys():
         data = {
-            "hidden": torch.cat(hiddens),
-            "correct": correct,
-            "image": torch.cat(images),
-            "label": labels,
-            "index": indices
+            "hidden": np.concatenate(hiddens),
+            "correct": np.array(correct),
+            "image": np.concatenate(images),
+            "label": np.array(labels),
+            "index": np.array(indices)
         }
         save_path = os.path.join(
             args.save_dir,
@@ -113,6 +117,21 @@ def evaluate(args, model, features, data_loader, split="train"):
         with open(save_path, "wb") as f:
             pickle.dump(data, f)
         print(f"Saved to {save_path}")
+
+        # Save stats as json
+        stats = {
+            "total_examples": len(indices),
+            "correct_examples": sum(correct),
+            "wrong_examples": len(indices) - sum(correct)
+        }
+        stats_save_path = os.path.join(
+            args.save_dir,
+            f"{args.dataset}_{k}_acc{args.acc_n}_{split}_{len(indices)}_stats.json"
+        )
+        with open(stats_save_path, "w") as f:
+            json.dump(stats, f)
+        print(f"Saved stats to {stats_save_path}")
+    
 
 def main():
     args = parse_args()
